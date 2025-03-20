@@ -1,0 +1,49 @@
+# Environment variables
+.env
+.history/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+.coverage
+
+# Streamlit
+.streamlit/
+
+# Data
+data/*
+!data/.gitkeep
+!data/orders.csv
+!data/policies.json
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db 
+
+# Mock data
+MagicMock/ 

@@ -1,0 +1,6 @@
+order_id,customer_name,date,status,items,total_price,shipping_address,tracking_number,estimated_delivery
+ORD12345,John Smith,2025-03-15,Shipped,"Wireless Headphones, Smart Watch",149.99,"123 Main St, Anytown, CA 90210",TRK78901234,2025-03-22
+ORD67890,Emily Johnson,2025-03-16,Processing,"Laptop Stand, Wireless Keyboard, Mouse",89.95,"456 Oak Ave, Somewhere, NY 10001",TRK45678901,2025-03-25
+ORD24680,Michael Brown,2025-03-12,Delivered,"Smart Speaker, HDMI Cable",129.99,"789 Pine Rd, Elsewhere, TX 75001",TRK12345678,2025-03-19
+ORD13579,Sarah Williams,2025-03-18,Pending,"Gaming Mouse, Mechanical Keyboard",199.95,"321 Elm Blvd, Nowhere, WA 98001",Not available,2025-03-27
+ORD86420,David Taylor,2025-03-10,Cancelled,"USB-C Hub, External SSD",159.99,"654 Maple Dr, Anyplace, FL 33101",Not available,Not applicable
