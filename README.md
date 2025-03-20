@@ -21,16 +21,30 @@ A modern, agent-based customer support chatbot built with Python, Streamlit, and
 
 ### Docker Deployment
 
-1. Build and run with Docker Compose:
-```bash
-docker-compose up app
-```
+1. **Build the application**:
+   ```bash
+   docker-compose up --build -d
+   ```
+2. **Run tests**:
+   ```bash
+   docker-compose run test
+   ```
+
+3. **After the first build**, if you want to start the application without rebuilding, you can simply run:
+   ```bash
+   docker-compose up app
+   ```
+
+4. **To stop the application**, use:
+   ```bash
+   docker-compose down
+   ```
 
 ### Local Development
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/pearlsilver35/e-commerce-chatbot.git
 cd e-commerce-chatbot
 ```
 
@@ -49,8 +63,8 @@ pip install -r requirements.txt
 ```env
 OPENAI_API_KEY=your_openai_key
 GOOGLE_API_KEY=your_google_key
-OPENAI_MODEL=gpt-3.5-turbo
-GEMINI_MODEL=gemini-pro
+OPENAI_MODEL=gpt-4o
+GEMINI_MODEL=gemini-2.0-flash
 DEFAULT_MODEL=openai
 TEMPERATURE=0.7
 ```
