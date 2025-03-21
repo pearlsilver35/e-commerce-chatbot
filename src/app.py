@@ -3,22 +3,11 @@ Main application for the e-commerce customer support chatbot.
 """
 import logging
 import streamlit as st
-import uuid
-import time
-from typing import List, Dict, Optional
-from datetime import datetime, timedelta
 
-from src.core.config import Config
-from src.models.openai_model import OpenAIModel
-from src.models.gemini_model import GeminiModel
-from src.agents.order_status_agent import OrderStatusAgent
-from src.agents.return_policy_agent import ReturnPolicyAgent
-from src.agents.human_rep_agent import HumanRepAgent
-from src.services.order_service import OrderService
-from src.services.policy_service import PolicyService
-from src.services.customer_service import CustomerService
-from src.services.conversation_service import ConversationService
-from chromadb.utils import embedding_functions
+from src.core.app_factory import AppFactory
+from src.core.conversation_manager import ConversationManager
+from src.core.input_handler import InputHandler
+from src.utils.error_handler import ErrorHandler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,363 +19,75 @@ class ChatbotApp:
     
     def __init__(self):
         """Initialize the chatbot application."""
-        st.set_page_config(
-            page_title="Insait Support",
-            page_icon="🤖",
-            layout="wide"
-        )
-        
-        self.config = Config()
-        self.config.validate()
-        
+        # Create app components
         try:
-            logger.info("Preloading ChromaDB embedding function...")
-            embedding_functions.DefaultEmbeddingFunction()
-            logger.info("ChromaDB embedding function loaded successfully")
-        except Exception as e:
-            logger.warning(f"Failed to preload embedding function: {str(e)}")
-        
-        self._init_session_state()
-        
-        self.order_service = OrderService(self.config.ORDERS_FILE)
-        self.policy_service = PolicyService(self.config.POLICIES_FILE)
-        self.customer_service = CustomerService(self.config.CUSTOMER_REQUESTS_FILE)
-        self.conversation_service = ConversationService(self.config)
-        
-        self.openai_model = OpenAIModel(self.config)
-        self.gemini_model = GeminiModel(self.config)
-        
-        current_model = self._get_llm_model()
-        self.agents = [
-            OrderStatusAgent(current_model, self.order_service),
-            ReturnPolicyAgent(current_model, self.policy_service),
-            HumanRepAgent(current_model, self.customer_service)
-        ]
-        
-        self._load_conversation()
-        
-        if DEBUG_SESSION:
-            logger.info(f"Session state: {st.session_state}")
-    
-    def _init_session_state(self) -> None:
-        """Initialize Streamlit session state variables."""
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
+            self.components = AppFactory.create_app_components()
             
-        if "model" not in st.session_state:
-            st.session_state.model = self.config.DEFAULT_MODEL
+            # Create helper objects
+            self.conversation_manager = ConversationManager(
+                self.components['session_manager'],
+                self.components['conversation_service']
+            )
             
-        if "user_id" not in st.session_state:
-            query_params = st.query_params
-            if "user_id" in query_params:
-                st.session_state.user_id = query_params["user_id"]
-                logger.info(f"Using user_id from query params: {st.session_state.user_id}")
-            else:
-                st.session_state.user_id = str(uuid.uuid4())
-                st.query_params["user_id"] = st.session_state.user_id
-                logger.info(f"Generated new user_id: {st.session_state.user_id}")
-        
-        # Add agent state tracking
-        if "active_agent" not in st.session_state:
-            st.session_state.active_agent = None
+            self.input_handler = InputHandler(
+                self.components['session_manager'],
+                self.components['message_processor']
+            )
             
-        # Add user info persistence for agents
-        if "agent_user_info" not in st.session_state:
-            st.session_state.agent_user_info = {}
+            # Load conversation history
+            self.conversation_manager.load_conversation()
             
-        # Add rate limiting variables
-        if "last_request_time" not in st.session_state:
-            st.session_state.last_request_time = datetime.now() - timedelta(minutes=1)
-        
-        if "request_count" not in st.session_state:
-            st.session_state.request_count = 0
-            
-        if DEBUG_SESSION:
-            logger.info(f"Session state initialized with user_id: {st.session_state.user_id}")
-    
-    def _check_rate_limit(self) -> bool:
-        """
-        Check if current request is within rate limits.
-        
-        Returns:
-            bool: True if request is allowed, False if rate limited
-        """
-        # Reset counter if it's been more than a minute since last request
-        current_time = datetime.now()
-        time_diff = (current_time - st.session_state.last_request_time).total_seconds()
-        
-        if time_diff > 60:  # Reset after 1 minute
-            st.session_state.request_count = 0
-            st.session_state.last_request_time = current_time
-            return True
-        
-        # Increment counter and check if we're over the limit
-        st.session_state.request_count += 1
-        if st.session_state.request_count > 8:  # Max 8 requests per minute
-            logger.warning(f"Rate limit exceeded: {st.session_state.request_count} requests in under a minute")
-            return False
-        
-        # Update last request time
-        st.session_state.last_request_time = current_time
-        return True
-    
-    def _load_conversation(self) -> None:
-        """Load conversation history from persistent storage."""
-        try:
-            user_id = st.session_state.user_id
-            logger.info(f"Loading conversation for user: {user_id}")
-            
-            messages = self.conversation_service.load_conversation(user_id)
-            if messages:
-                st.session_state.messages = messages
-                logger.info(f"Loaded {len(messages)} messages from persistent storage")
-            else:
-                logger.info("No existing conversation found in persistent storage")
-        except Exception as e:
-            logger.error(f"Error loading conversation: {str(e)}")
-    
-    def _save_conversation(self) -> None:
-        """Save conversation history to persistent storage."""
-        try:
-            if st.session_state.messages:
-                user_id = st.session_state.user_id
-                logger.info(f"Saving conversation for user: {user_id}")
-                
-                success = self.conversation_service.save_conversation(
-                    user_id, 
-                    st.session_state.messages
+            # Log debug info if enabled
+            if DEBUG_SESSION:
+                logger.info(
+                    f"Session state initialized with user_id: {self.components['session_manager'].user_id}"
                 )
-                if success:
-                    logger.info(f"Saved {len(st.session_state.messages)} messages to persistent storage")
-                else:
-                    logger.warning("Failed to save conversation to persistent storage")
         except Exception as e:
-            logger.error(f"Error saving conversation: {str(e)}")
+            ErrorHandler.handle_error(e, "Failed to initialize the application")
     
-    def _clear_conversation(self) -> None:
-        """Clear conversation history from persistent storage and session."""
-        try:
-            user_id = st.session_state.user_id
-            logger.info(f"Clearing conversation for user: {user_id}")
-            
-            success = self.conversation_service.delete_conversation(user_id)
-            if success:
-                logger.info("Deleted conversation from persistent storage")
-            else:
-                logger.warning("Failed to delete conversation from persistent storage")
-        except Exception as e:
-            logger.error(f"Error clearing conversation: {str(e)}")
+    def _handle_model_change(self, new_model: str) -> None:
+        """Handle model change from UI."""
+        session_manager = self.components['session_manager']
+        message_processor = self.components['message_processor']
         
-        st.session_state.messages = []
-    
-    def _get_llm_model(self) -> OpenAIModel:
-        """Get the current LLM model based on session state."""
-        if st.session_state.model == "openai":
-            return self.openai_model
-        else:
-            return self.gemini_model
-    
-    def _process_message(self, message: str) -> str:
-        """
-        Process a user message and generate a response.
-        
-        Args:
-            message: The user's message
-            
-        Returns:
-            str: Generated response
-        """
-        try:
-            # Check rate limiting first
-            if not self._check_rate_limit():
-                return "I'm receiving too many requests right now. Please wait a moment before sending another message."
-            
-            # Get the current model once
-            current_model = self._get_llm_model()
-            
-            # Set model for all agents in one pass
-            for agent in self.agents:
-                agent.llm = current_model
-            
-            # First check if we have an active agent from a previous message
-            if st.session_state.active_agent is not None:
-                # Try to find the same agent instance
-                active_agent = None
-                for agent in self.agents:
-                    if agent.__class__.__name__ == st.session_state.active_agent:
-                        active_agent = agent
-                        logger.info(f"Continuing with active agent {agent.__class__.__name__}")
-                        
-                        # Only try to restore state for HumanRepAgent which needs persistence
-                        if isinstance(agent, HumanRepAgent):
-                            if agent.__class__.__name__ in st.session_state.agent_user_info:
-                                agent.user_info = st.session_state.agent_user_info[agent.__class__.__name__]
-                                agent.collecting_info = True
-                                logger.info(f"Restored agent state: {agent.user_info}")
-                        
-                        # Let the agent handle the message
-                        response = agent.handle(message, st.session_state.messages)
-                        
-                        # Only save state for HumanRepAgent
-                        if isinstance(agent, HumanRepAgent):
-                            st.session_state.agent_user_info[agent.__class__.__name__] = agent.user_info
-                            # Only clear active agent if done collecting info AND after saving contact
-                            if not agent.collecting_info:
-                                # Make sure the contact info is saved before clearing state
-                                if hasattr(agent, 'user_info') and 'name' in agent.user_info and 'email' in agent.user_info and 'phone' in agent.user_info:
-                                    from src.models.contact import ContactInfo
-                                    contact_info = ContactInfo(
-                                        full_name=agent.user_info['name'],
-                                        email=agent.user_info['email'],
-                                        phone_number=agent.user_info['phone']
-                                    )
-                                    success = agent.customer_service.save_contact_request(contact_info)
-                                    if success:
-                                        logger.info(f"Successfully saved contact request for {contact_info.full_name}")
-                                    else:
-                                        logger.error(f"Failed to save contact request for {agent.user_info['name']}")
-                                logger.info(f"Agent {agent.__class__.__name__} completed its task")
-                                st.session_state.active_agent = None
-                        else:
-                            # For other agents, clear active state after handling
-                            st.session_state.active_agent = None
-                        
-                        return response
-            
-            # Try to find an appropriate agent to handle the message
-            for agent in self.agents:
-                if agent.can_handle(message):
-                    logger.info(f"Agent {agent.__class__.__name__} is handling the message")
-                    
-                    # Set as active agent for future messages
-                    st.session_state.active_agent = agent.__class__.__name__
-                    
-                    # Let the agent handle the message
-                    response = agent.handle(message, st.session_state.messages)
-                    
-                    # Only save state for HumanRepAgent
-                    if isinstance(agent, HumanRepAgent):
-                        st.session_state.agent_user_info[agent.__class__.__name__] = agent.user_info
-                        logger.info(f"Saved agent state: {agent.user_info}")
-                        # Keep as active agent only if still collecting info
-                        if not agent.collecting_info:
-                            # Make sure the contact info is saved before clearing state
-                            if hasattr(agent, 'user_info') and 'name' in agent.user_info and 'email' in agent.user_info and 'phone' in agent.user_info:
-                                from src.models.contact import ContactInfo
-                                contact_info = ContactInfo(
-                                    full_name=agent.user_info['name'],
-                                    email=agent.user_info['email'],
-                                    phone_number=agent.user_info['phone']
-                                )
-                                success = agent.customer_service.save_contact_request(contact_info)
-                                if success:
-                                    logger.info(f"Successfully saved contact request for {contact_info.full_name}")
-                                else:
-                                    logger.error(f"Failed to save contact request for {agent.user_info['name']}")
-                            st.session_state.active_agent = None
-                    else:
-                        # For other agents, clear active state after handling
-                        st.session_state.active_agent = None
-                    
-                    return response
-            
-            # If no agent could handle it, use the default model
-            logger.info(f"No specific agent found, using {current_model.__class__.__name__}")
-            st.session_state.active_agent = None  # Clear any previous active agent
-            response = current_model.generate_response(message, st.session_state.messages)
-            return response
-        except Exception as e:
-            logger.error(f"Error processing message: {str(e)}")
-            return "I'm sorry, I'm experiencing technical difficulties. Please try again later."
+        if new_model != session_manager.model:
+            session_manager.model = new_model
+            message_processor.switch_model(new_model)
+            logger.info(f"Switched to {new_model} model")
     
     def run(self) -> None:
         """Run the Streamlit application."""
-        st.title("Insait Support")
-        st.markdown("""
-        👋 Hi! I'm **Atlas**, your Insait e-commerce Support Assistant. I'm here to help you with:
-        - Order tracking and status
-        - Return policies and refunds
-        - Connecting with our support team
+        # Get components
+        ui = self.components['ui']
+        session_manager = self.components['session_manager']
+        openai_model = self.components['openai_model']
+        gemini_model = self.components['gemini_model']
         
-        How can I assist you today?
-        """)
+        # Determine available models
+        available_models = AppFactory.get_available_models(openai_model, gemini_model)
         
-        for message in st.session_state.messages:
-            role_color = "#0084ff" if message["role"] == "assistant" else "#262730"
-            role_icon = "🤖" if message["role"] == "assistant" else "👤"
-            
-            with st.chat_message(message["role"], avatar=role_icon):
-                st.markdown(message["content"])
+        # Render header
+        ui.render_header()
         
-        if prompt := st.chat_input("Type your message here..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user", avatar="👤"):
-                st.markdown(prompt)
-            
-            with st.chat_message("assistant", avatar="🤖"):
-                with st.spinner("Atlas is thinking..."):
-                    response = self._process_message(prompt)
-                    st.markdown(response)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
-                    
-                    # Save conversation once after all processing is complete
-                    self._save_conversation()
+        # Render existing messages
+        ui.render_messages(session_manager.messages)
         
-        with st.sidebar:
-            st.title("Settings")
+        # Handle user input
+        if prompt := ui.render_chat_input():
+            # Process the input
+            response = self.input_handler.handle_user_input(prompt, ui)
             
-            model = st.selectbox(
-                "Select AI Model",
-                ["openai", "gemini"],
-                index=0 if st.session_state.model == "openai" else 1
-            )
-            if model != st.session_state.model:
-                st.session_state.model = model
-                current_model = self._get_llm_model()
-                logger.info(f"Switching model to {model}")
-                for agent in self.agents:
-                    agent.llm = current_model
-                # We don't clear conversations when switching models anymore
-                # This allows the conversation to continue with a different model
-                st.rerun()
-            
-            if st.button("Clear Chat"):
-                self._clear_conversation()
-                st.rerun()
-            
-            st.markdown("### Example Messages")
-            st.markdown("""
-            **Order Status:**
-            - "What's the status of my order ORD12345?"
-            - "Where is my order ORD67890?"
-            - "When will my order arrive?"
-            
-            **Return Policy:**
-            - "What's your return policy?"
-            - "How do I return an item?"
-            - "What items can't be returned?"
-            - "What's your shipping policy?"
-            
-            **Human Representative:**
-            - "I need to speak with a human"
-            - "Can I talk to a customer service representative?"
-            - "I want to speak with someone in person"
-            """)
-            
-            st.markdown("### Valid Order IDs")
-            st.markdown("""
-            - ORD12345 (Shipped)
-            - ORD67890 (Processing)
-            - ORD13579 (Pending)
-            - ORD86420 (Cancelled)
-            """)
-            
-            st.markdown("### About Insait")
-            st.markdown("""
-            Insait is your trusted partner in E-commerce solutions. 
-            We're committed to providing exceptional customer service 
-            and ensuring a seamless shopping experience.
-            """)
+            # Save conversation if response was generated
+            if response:
+                self.conversation_manager.save_conversation()
+        
+        # Render sidebar with settings
+        ui.render_sidebar(
+            session_manager.model,
+            self._handle_model_change,
+            self.conversation_manager.clear_conversation,
+            available_models
+        )
 
 def main():
     """Main entry point for the application."""
@@ -394,8 +95,7 @@ def main():
         app = ChatbotApp()
         app.run()
     except Exception as e:
-        logger.error(f"Application error: {str(e)}")
-        st.error("An error occurred. Please try again later.")
+        ErrorHandler.handle_error(e)
 
 if __name__ == "__main__":
     main() 

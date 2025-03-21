@@ -44,10 +44,13 @@ class Config:
     
     def validate(self) -> None:
         """Validate configuration settings."""
-        if not self.OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY is required")
-        if not self.GOOGLE_API_KEY:
-            raise ValueError("GOOGLE_API_KEY is required")
+        # Validate API keys based on the default model
+        if self.DEFAULT_MODEL == "openai" and not self.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY is required when using OpenAI as default model")
+        if self.DEFAULT_MODEL == "gemini" and not self.GOOGLE_API_KEY:
+            raise ValueError("GOOGLE_API_KEY is required when using Gemini as default model")
+            
+        # Still validate model names regardless of which is default
         if not self.OPENAI_MODEL:
             raise ValueError("OPENAI_MODEL is required")
         if not self.GEMINI_MODEL:
