@@ -5,7 +5,7 @@ services:
       - "8501:8501"
     volumes:
       - .:/app
-      - ./data:/app/data
+      - ./data:/app/data:rw
     env_file:
       - .env
     restart: unless-stopped
@@ -14,11 +14,15 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
 
   test:
     build: .
     volumes:
       - .:/app
+      - ./data:/app/data:rw
     env_file:
       - .env
     environment:

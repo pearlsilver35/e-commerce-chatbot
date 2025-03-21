@@ -28,12 +28,20 @@ class OrderStatusAgent(AgentInterface):
             "order status",
             "track order",
             "where is my order",
-            "when will my order arrive"
+            "when will my order arrive",
+            "my order",
+            "shipping",
+            "delivery",
+            "package",
+            "ORD",
+            "tracking",
+            "shipped",
+            "shipping status"
         ]
     
     def can_handle(self, message: str) -> bool:
         """
-        Check if this agent can handle the given message.
+        Check if this agent can handle the given message using keyword matching.
         
         Args:
             message: The user's message
@@ -41,12 +49,13 @@ class OrderStatusAgent(AgentInterface):
         Returns:
             bool: True if this agent can handle the message
         """
-        prompt = f"""Determine if the following message is asking about order status or tracking.
-        Message: {message}
-        Respond with only 'yes' or 'no'."""
-        
-        response = self.llm.generate_response(prompt).strip().lower()
-        return response == 'yes'
+        # Check for order ID pattern first (highest priority)
+        if re.search(r'(ORD\d+)', message, re.IGNORECASE):
+            return True
+            
+        # Then check for keywords
+        message_lower = message.lower()
+        return any(keyword.lower() in message_lower for keyword in self.order_keywords)
     
     def handle(self, message: str, history: List[Dict[str, str]]) -> str:
         """

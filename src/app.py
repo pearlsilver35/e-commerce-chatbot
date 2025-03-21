@@ -4,7 +4,9 @@ Main application for the e-commerce customer support chatbot.
 import logging
 import streamlit as st
 import uuid
+import time
 from typing import List, Dict, Optional
+from datetime import datetime, timedelta
 
 from src.core.config import Config
 from src.models.openai_model import OpenAIModel
@@ -84,8 +86,49 @@ class ChatbotApp:
                 st.query_params["user_id"] = st.session_state.user_id
                 logger.info(f"Generated new user_id: {st.session_state.user_id}")
         
+        # Add agent state tracking
+        if "active_agent" not in st.session_state:
+            st.session_state.active_agent = None
+            
+        # Add user info persistence for agents
+        if "agent_user_info" not in st.session_state:
+            st.session_state.agent_user_info = {}
+            
+        # Add rate limiting variables
+        if "last_request_time" not in st.session_state:
+            st.session_state.last_request_time = datetime.now() - timedelta(minutes=1)
+        
+        if "request_count" not in st.session_state:
+            st.session_state.request_count = 0
+            
         if DEBUG_SESSION:
             logger.info(f"Session state initialized with user_id: {st.session_state.user_id}")
+    
+    def _check_rate_limit(self) -> bool:
+        """
+        Check if current request is within rate limits.
+        
+        Returns:
+            bool: True if request is allowed, False if rate limited
+        """
+        # Reset counter if it's been more than a minute since last request
+        current_time = datetime.now()
+        time_diff = (current_time - st.session_state.last_request_time).total_seconds()
+        
+        if time_diff > 60:  # Reset after 1 minute
+            st.session_state.request_count = 0
+            st.session_state.last_request_time = current_time
+            return True
+        
+        # Increment counter and check if we're over the limit
+        st.session_state.request_count += 1
+        if st.session_state.request_count > 8:  # Max 8 requests per minute
+            logger.warning(f"Rate limit exceeded: {st.session_state.request_count} requests in under a minute")
+            return False
+        
+        # Update last request time
+        st.session_state.last_request_time = current_time
+        return True
     
     def _load_conversation(self) -> None:
         """Load conversation history from persistent storage."""
@@ -154,20 +197,103 @@ class ChatbotApp:
             str: Generated response
         """
         try:
+            # Check rate limiting first
+            if not self._check_rate_limit():
+                return "I'm receiving too many requests right now. Please wait a moment before sending another message."
+            
+            # Get the current model once
             current_model = self._get_llm_model()
+            
+            # Set model for all agents in one pass
             for agent in self.agents:
                 agent.llm = current_model
             
+            # First check if we have an active agent from a previous message
+            if st.session_state.active_agent is not None:
+                # Try to find the same agent instance
+                active_agent = None
+                for agent in self.agents:
+                    if agent.__class__.__name__ == st.session_state.active_agent:
+                        active_agent = agent
+                        logger.info(f"Continuing with active agent {agent.__class__.__name__}")
+                        
+                        # Only try to restore state for HumanRepAgent which needs persistence
+                        if isinstance(agent, HumanRepAgent):
+                            if agent.__class__.__name__ in st.session_state.agent_user_info:
+                                agent.user_info = st.session_state.agent_user_info[agent.__class__.__name__]
+                                agent.collecting_info = True
+                                logger.info(f"Restored agent state: {agent.user_info}")
+                        
+                        # Let the agent handle the message
+                        response = agent.handle(message, st.session_state.messages)
+                        
+                        # Only save state for HumanRepAgent
+                        if isinstance(agent, HumanRepAgent):
+                            st.session_state.agent_user_info[agent.__class__.__name__] = agent.user_info
+                            # Only clear active agent if done collecting info AND after saving contact
+                            if not agent.collecting_info:
+                                # Make sure the contact info is saved before clearing state
+                                if hasattr(agent, 'user_info') and 'name' in agent.user_info and 'email' in agent.user_info and 'phone' in agent.user_info:
+                                    from src.models.contact import ContactInfo
+                                    contact_info = ContactInfo(
+                                        full_name=agent.user_info['name'],
+                                        email=agent.user_info['email'],
+                                        phone_number=agent.user_info['phone']
+                                    )
+                                    success = agent.customer_service.save_contact_request(contact_info)
+                                    if success:
+                                        logger.info(f"Successfully saved contact request for {contact_info.full_name}")
+                                    else:
+                                        logger.error(f"Failed to save contact request for {agent.user_info['name']}")
+                                logger.info(f"Agent {agent.__class__.__name__} completed its task")
+                                st.session_state.active_agent = None
+                        else:
+                            # For other agents, clear active state after handling
+                            st.session_state.active_agent = None
+                        
+                        return response
+            
+            # Try to find an appropriate agent to handle the message
             for agent in self.agents:
                 if agent.can_handle(message):
                     logger.info(f"Agent {agent.__class__.__name__} is handling the message")
+                    
+                    # Set as active agent for future messages
+                    st.session_state.active_agent = agent.__class__.__name__
+                    
+                    # Let the agent handle the message
                     response = agent.handle(message, st.session_state.messages)
-                    self._save_conversation()
+                    
+                    # Only save state for HumanRepAgent
+                    if isinstance(agent, HumanRepAgent):
+                        st.session_state.agent_user_info[agent.__class__.__name__] = agent.user_info
+                        logger.info(f"Saved agent state: {agent.user_info}")
+                        # Keep as active agent only if still collecting info
+                        if not agent.collecting_info:
+                            # Make sure the contact info is saved before clearing state
+                            if hasattr(agent, 'user_info') and 'name' in agent.user_info and 'email' in agent.user_info and 'phone' in agent.user_info:
+                                from src.models.contact import ContactInfo
+                                contact_info = ContactInfo(
+                                    full_name=agent.user_info['name'],
+                                    email=agent.user_info['email'],
+                                    phone_number=agent.user_info['phone']
+                                )
+                                success = agent.customer_service.save_contact_request(contact_info)
+                                if success:
+                                    logger.info(f"Successfully saved contact request for {contact_info.full_name}")
+                                else:
+                                    logger.error(f"Failed to save contact request for {agent.user_info['name']}")
+                            st.session_state.active_agent = None
+                    else:
+                        # For other agents, clear active state after handling
+                        st.session_state.active_agent = None
+                    
                     return response
             
+            # If no agent could handle it, use the default model
             logger.info(f"No specific agent found, using {current_model.__class__.__name__}")
+            st.session_state.active_agent = None  # Clear any previous active agent
             response = current_model.generate_response(message, st.session_state.messages)
-            self._save_conversation()
             return response
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
@@ -203,6 +329,7 @@ class ChatbotApp:
                     st.markdown(response)
                     st.session_state.messages.append({"role": "assistant", "content": response})
                     
+                    # Save conversation once after all processing is complete
                     self._save_conversation()
         
         with st.sidebar:

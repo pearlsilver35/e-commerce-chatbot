@@ -2,7 +2,7 @@
 Return policy agent implementation.
 """
 import logging
-from typing import Dict, List
+from typing import Dict, Optional, List
 
 from src.interfaces.agent import AgentInterface
 from src.interfaces.llm import LLMInterface
@@ -23,10 +23,28 @@ class ReturnPolicyAgent(AgentInterface):
         """
         self.llm = llm
         self.policy_service = policy_service
+        self.policy_keywords = [
+            "return policy", 
+            "how to return", 
+            "can I return", 
+            "refund", 
+            "money back",
+            "return item",
+            "return product",
+            "return an item",
+            "shipping policy",
+            "return period",
+            "return window",
+            "exchange policy",
+            "warranty",
+            "damaged item",
+            "return address",
+            "return shipping"
+        ]
     
     def can_handle(self, message: str) -> bool:
         """
-        Check if this agent can handle the given message.
+        Check if this agent can handle the given message using keyword matching.
         
         Args:
             message: The user's message
@@ -34,12 +52,8 @@ class ReturnPolicyAgent(AgentInterface):
         Returns:
             bool: True if this agent can handle the message
         """
-        prompt = f"""Determine if the following message is asking about return policies, refunds, shipping policies, or product returns.
-        Message: {message}
-        Respond with only 'yes' or 'no'."""
-        
-        response = self.llm.generate_response(prompt).strip().lower()
-        return response == 'yes'
+        message_lower = message.lower()
+        return any(keyword.lower() in message_lower for keyword in self.policy_keywords)
     
     def handle(self, message: str, history: List[Dict[str, str]]) -> str:
         """
@@ -59,51 +73,52 @@ class ReturnPolicyAgent(AgentInterface):
                 policy = self.policy_service.get_general_return_policy()
                 prompt = f"""You are a customer support assistant. Respond directly to the customer without using quotes, meta-commentary, or speaking about yourself in the third person.
                 
-                The customer is asking about our general return policy: {policy}
+                The customer is asking about our return policy.
+                Return Policy: {policy}
                 Their message: {message}
                 
-                Acknowledge their query and explain the general return policy clearly and concisely."""
+                Explain our return policy clearly and be helpful."""
                 
-            elif "can't be returned" in message_lower or "can not return" in message_lower or "non-returnable" in message_lower:
-                exceptions = self.policy_service.get_return_exceptions()
+                return self.llm.generate_response(prompt, history)
+            
+            elif "shipping policy" in message_lower:
+                policy = self.policy_service.get_shipping_policy()
                 prompt = f"""You are a customer support assistant. Respond directly to the customer without using quotes, meta-commentary, or speaking about yourself in the third person.
                 
-                The customer is asking about items that cannot be returned. Here are the exceptions: {exceptions}
+                The customer is asking about our shipping policy.
+                Shipping Policy: {policy}
                 Their message: {message}
                 
-                Explain which items cannot be returned in a clear and helpful way."""
+                Explain our shipping policy clearly and be helpful."""
                 
+                return self.llm.generate_response(prompt, history)
+            
             elif "refund" in message_lower:
-                refund_policy = self.policy_service.get_refund_policy()
+                policy = self.policy_service.get_refund_policy()
                 prompt = f"""You are a customer support assistant. Respond directly to the customer without using quotes, meta-commentary, or speaking about yourself in the third person.
                 
-                The customer is asking about our refund policy: {refund_policy}
+                The customer is asking about our refund policy.
+                Refund Policy: {policy}
                 Their message: {message}
                 
-                Explain the refund process clearly and concisely."""
+                Explain our refund policy clearly and be helpful."""
                 
-            elif any(keyword in message_lower for keyword in ["shipping", "delivery", "ship", "deliver"]):
-                shipping_policy = self.policy_service.get_shipping_policy()
-                prompt = f"""You are a customer support assistant. Respond directly to the customer without using quotes, meta-commentary, or speaking about yourself in the third person.
-                
-                The customer is asking about our shipping policy: {shipping_policy}
-                Their message: {message}
-                
-                Explain the shipping policy clearly and concisely."""
-                
+                return self.llm.generate_response(prompt, history)
+            
             else:
+                policy = self.policy_service.get_general_return_policy()
                 prompt = f"""You are a customer support assistant. Respond directly to the customer without using quotes, meta-commentary, or speaking about yourself in the third person.
                 
-                The customer has a question that might require human assistance.
+                The customer appears to be asking about some aspect of our policies.
+                Return Policy: {policy}
                 Their message: {message}
                 
-                Acknowledge their question and explain that you'll connect them with a representative."""
-            
-            return self.llm.generate_response(prompt, history)
-            
+                Based on their query, provide the most relevant information about our policies in a helpful manner."""
+                
+                return self.llm.generate_response(prompt, history)
         except Exception as e:
-            logger.error(f"Error processing policy query: {str(e)}")
-            return "I'm sorry, I'm having trouble accessing our policies. Please try again later."
+            logger.error(f"Error processing return policy query: {str(e)}")
+            return "I'm sorry, I'm having trouble retrieving our policy information. Please try again later."
     
     def update_context(self, context: Dict) -> None:
         """
