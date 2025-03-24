@@ -2,19 +2,17 @@
 Google Gemini model implementation using LangChain.
 """
 import logging
-import hashlib
-import json
 from typing import List, Dict, Optional
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
 import google.generativeai as genai
 
-from src.interfaces.llm import LLMInterface
+from src.models.base_model import BaseLLMModel
 from src.core.config import Config
 
 logger = logging.getLogger(__name__)
 
-class GeminiModel(LLMInterface):
+class GeminiModel(BaseLLMModel):
     """Google Gemini model implementation using LangChain."""
     
     def __init__(self, config: Config):
@@ -24,9 +22,8 @@ class GeminiModel(LLMInterface):
         Args:
             config: Application configuration
         """
-        self.config = config
+        super().__init__(config)
         self.model = None
-        self.response_cache = {}  # Simple in-memory cache
     
     def initialize(self) -> None:
         """Initialize Gemini model and resources."""
@@ -53,28 +50,6 @@ class GeminiModel(LLMInterface):
             logger.error(f"Error initializing Gemini model: {str(e)}")
             raise
     
-    def _get_cache_key(self, user_input: str, conversation_history: Optional[List[Dict]]) -> str:
-        """
-        Generate a cache key for the given input and conversation history.
-        
-        Args:
-            user_input: The user's message
-            conversation_history: Conversation history
-            
-        Returns:
-            str: Cache key
-        """
-        # Create a stable representation of inputs
-        history_str = ""
-        if conversation_history:
-            # Use only the last few messages to keep the cache more effective
-            recent_history = conversation_history[-5:] if len(conversation_history) > 5 else conversation_history
-            history_str = json.dumps(recent_history, sort_keys=True)
-        
-        # Create hash from inputs
-        key_content = f"{user_input}|{history_str}"
-        return hashlib.md5(key_content.encode()).hexdigest()
-    
     def generate_response(self, user_input: str, conversation_history: Optional[List[Dict]] = None) -> str:
         """
         Generate a response using Gemini model.
@@ -99,8 +74,8 @@ class GeminiModel(LLMInterface):
             # Format messages for LangChain ChatGoogleGenerativeAI
             formatted_messages = []
             
-            # Add system message
-            system_prompt = self.config.SYSTEM_PROMPT + "\n\nIMPORTANT: Always respond directly to the customer without using quotes, meta-commentary, or speaking about yourself in the third person. Provide only the response content, not how you would respond."
+            # Add system message with enhanced policy information
+            system_prompt = self._get_enhanced_system_prompt() + "\n\nIMPORTANT: Always respond directly to the customer without using quotes, meta-commentary, or speaking about yourself in the third person. Provide only the response content, not how you would respond."
             formatted_messages.append(HumanMessage(content=f"System instructions: {system_prompt}"))
             
             # Add conversation history
@@ -118,15 +93,8 @@ class GeminiModel(LLMInterface):
             response = self.model.invoke(formatted_messages)
             response_text = response.content
             
-            # Cache the response
-            self.response_cache[cache_key] = response_text
-            
-            # Keep cache size reasonable
-            if len(self.response_cache) > 100:
-                # Remove oldest items (simple approach)
-                keys_to_remove = list(self.response_cache.keys())[:-50]  # Keep only the 50 most recent
-                for key in keys_to_remove:
-                    del self.response_cache[key]
+            # Manage cache
+            self._manage_cache(cache_key, response_text)
             
             logger.info("Generated Gemini response successfully")
             return response_text

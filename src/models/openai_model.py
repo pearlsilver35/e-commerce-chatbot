@@ -2,18 +2,16 @@
 OpenAI model implementation using LangChain with optimizations.
 """
 import logging
-import hashlib
-import json
 from typing import List, Dict, Optional
 from langchain_openai import ChatOpenAI
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
 
-from src.interfaces.llm import LLMInterface
+from src.models.base_model import BaseLLMModel
 from src.core.config import Config
 
 logger = logging.getLogger(__name__)
 
-class OpenAIModel(LLMInterface):
+class OpenAIModel(BaseLLMModel):
     """OpenAI model implementation using LangChain."""
     
     def __init__(self, config: Config):
@@ -23,9 +21,8 @@ class OpenAIModel(LLMInterface):
         Args:
             config: Application configuration
         """
-        self.config = config
+        super().__init__(config)
         self.client = None
-        self.response_cache = {}  # Simple in-memory cache
     
     def initialize(self) -> None:
         """Initialize OpenAI model and resources."""
@@ -40,28 +37,6 @@ class OpenAIModel(LLMInterface):
         except Exception as e:
             logger.error(f"Error initializing OpenAI model: {str(e)}")
             raise
-    
-    def _get_cache_key(self, user_input: str, conversation_history: Optional[List[Dict]]) -> str:
-        """
-        Generate a cache key for the given input and conversation history.
-        
-        Args:
-            user_input: The user's message
-            conversation_history: Conversation history
-            
-        Returns:
-            str: Cache key
-        """
-        # Create a stable representation of inputs
-        history_str = ""
-        if conversation_history:
-            # Use only the last few messages to keep the cache more effective
-            recent_history = conversation_history[-5:] if len(conversation_history) > 5 else conversation_history
-            history_str = json.dumps(recent_history, sort_keys=True)
-        
-        # Create hash from inputs
-        key_content = f"{user_input}|{history_str}"
-        return hashlib.md5(key_content.encode()).hexdigest()
     
     def generate_response(self, user_input: str, conversation_history: Optional[List[Dict]] = None) -> str:
         """
@@ -85,7 +60,8 @@ class OpenAIModel(LLMInterface):
             
             formatted_messages = []
             
-            system_prompt = self.config.SYSTEM_PROMPT + "\n\nIMPORTANT: Always respond directly to the customer without using quotes, meta-commentary, or speaking about yourself in the third person. Provide only the response content, not how you would respond."
+            # Use enhanced system prompt with policy information
+            system_prompt = self._get_enhanced_system_prompt() + "\n\nIMPORTANT: Always respond directly to the customer without using quotes, meta-commentary, or speaking about yourself in the third person. Provide only the response content, not how you would respond."
             formatted_messages.append(SystemMessage(content=system_prompt))
             
             if conversation_history:
@@ -100,15 +76,8 @@ class OpenAIModel(LLMInterface):
             response = self.client.invoke(formatted_messages)
             response_text = response.content
             
-            # Cache the response
-            self.response_cache[cache_key] = response_text
-            
-            # Keep cache size reasonable
-            if len(self.response_cache) > 100:
-                # Remove oldest items (simple approach)
-                keys_to_remove = list(self.response_cache.keys())[:-50]  # Keep only the 50 most recent
-                for key in keys_to_remove:
-                    del self.response_cache[key]
+            # Manage cache
+            self._manage_cache(cache_key, response_text)
             
             logger.info("Generated OpenAI response successfully")
             return response_text
