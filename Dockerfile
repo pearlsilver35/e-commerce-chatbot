@@ -22,8 +22,12 @@ COPY . .
 RUN mkdir -p data/chroma_db
 
 # Preload the ChromaDB embedding model to avoid first-request delay
+# Create directory and fully download the model before running the app
 RUN mkdir -p /root/.cache/chroma/onnx_models
-RUN python -c "from chromadb.utils import embedding_functions; embedding_functions.DefaultEmbeddingFunction()"
+# Force full download of model and prevent runtime downloads
+RUN python -c "from chromadb.utils import embedding_functions; ef = embedding_functions.DefaultEmbeddingFunction(); ef(['This is a test to ensure model is fully downloaded'])"
+# Verify the model files are properly downloaded
+RUN ls -la /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2/
 
 # Set environment variables
 ENV PYTHONPATH=/app
