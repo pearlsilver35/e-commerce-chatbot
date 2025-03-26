@@ -25,6 +25,8 @@ class ConversationManager:
         try:
             user_id = self.session_manager.user_id
             messages = self.conversation_service.load_conversation(user_id)
+            # Clear existing messages before loading from storage
+            self.session_manager.clear_messages()
             if messages:
                 for message in messages:
                     self.session_manager.add_message(message["role"], message["content"])

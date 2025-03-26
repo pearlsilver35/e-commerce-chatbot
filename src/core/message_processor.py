@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from src.models.openai_model import OpenAIModel
 from src.models.gemini_model import GeminiModel
 from src.agents.order_status_agent import OrderStatusAgent
@@ -75,13 +75,8 @@ class MessageProcessor:
         chat_history: List[Dict[str, str]],
         active_agent: Optional[str] = None,
         agent_info: Optional[Dict] = None
-    ) -> tuple[str, Optional[str], Optional[Dict]]:
-        """
-        Process a user message and return response with updated agent state.
-        
-        Returns:
-            Tuple of (response, new_active_agent, new_agent_info)
-        """
+    ) -> Tuple[str, Optional[str], Optional[Dict]]:
+        """Process a message and return response, active agent, and agent info."""
         try:
             # First try to continue with active agent if any
             if active_agent:
@@ -104,12 +99,10 @@ class MessageProcessor:
                         
                         if isinstance(agent, HumanRepAgent):
                             new_agent_info = agent.user_info
-                            # Only clear active agent if done collecting info AND contact saved
+                            # Only clear active agent if done collecting info
                             if not agent.collecting_info:
-                                if self._try_save_contact(agent):
-                                    new_active_agent = None
-                                else:
-                                    new_active_agent = active_agent
+                                new_active_agent = None
+                                logger.info(f"Contact request completed for {agent.user_info.get('name', 'Customer')}")
                             else:
                                 new_active_agent = active_agent
                         
@@ -130,6 +123,8 @@ class MessageProcessor:
                         new_agent_info = agent.user_info
                         if agent.collecting_info:
                             new_active_agent = agent.__class__.__name__
+                        else:
+                            logger.info(f"Contact request completed for {agent.user_info.get('name', 'Customer')}")
                     
                     return response, new_active_agent, new_agent_info
             
@@ -141,23 +136,3 @@ class MessageProcessor:
         except Exception as e:
             logger.error(f"Error processing message: {str(e)}")
             return "I'm sorry, I'm experiencing technical difficulties. Please try again later.", None, None
-    
-    def _try_save_contact(self, agent: HumanRepAgent) -> bool:
-        """Try to save contact info from agent state."""
-        try:
-            if hasattr(agent, 'user_info') and 'name' in agent.user_info and 'email' in agent.user_info and 'phone' in agent.user_info:
-                contact_info = ContactInfo(
-                    full_name=agent.user_info['name'],
-                    email=agent.user_info['email'],
-                    phone_number=agent.user_info['phone']
-                )
-                success = agent.customer_service.save_contact_request(contact_info)
-                if success:
-                    logger.info(f"Successfully saved contact request for {contact_info.full_name}")
-                    return True
-                else:
-                    logger.error(f"Failed to save contact request for {agent.user_info['name']}")
-            return False
-        except Exception as e:
-            logger.error(f"Error saving contact info: {str(e)}")
-            return False 

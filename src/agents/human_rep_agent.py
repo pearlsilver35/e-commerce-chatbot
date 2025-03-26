@@ -1,142 +1,78 @@
 """
 Human representative agent implementation.
 """
-import re
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
+import json
 
-from src.interfaces.agent import AgentInterface
 from src.interfaces.llm import LLMInterface
+from src.interfaces.agent import AgentInterface
+from src.core.conversation_manager import ConversationManager
 from src.services.customer_service import CustomerService
+from src.services.conversation_service import ConversationService
 from src.models.contact import ContactInfo
 
 logger = logging.getLogger(__name__)
 
 class ContactInfoExtractor:
-    """Responsible for extracting contact information from messages."""
+    """Helper class to extract contact information using LLM."""
     
-    # Regex patterns
-    EMAIL_PATTERN = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-    PHONE_PATTERN = r'(\d{3}[-\.\s]??\d{3}[-\.\s]??\d{4}|\(\d{3}\)\s*\d{3}[-\.\s]??\d{4}|\d{10})'
-    NAME_LABEL_PATTERN = r'(?i)name\s*:?\s*([A-Z][a-z]+(\s+[A-Z][a-z]+)?)'
-    NAME_ONLY_PATTERN = r'^([A-Z][a-z]+(\s+[a-z]+)?(\s+[A-Z][a-z]+)?)$'
+    @staticmethod
+    def clean_json_response(response: str) -> str:
+        """Clean and normalize JSON response from LLM."""
+        response = response.strip()
+        response = response.replace("'", '"')
+        response = response.replace("None", "null")
+        response = response.replace("True", "true")
+        response = response.replace("False", "false")
+        
+        # Try to find JSON object in response
+        import re
+        json_match = re.search(r'\{.*\}', response, re.DOTALL)
+        if json_match:
+            response = json_match.group(0)
+        return response
     
     @classmethod
-    def extract_email(cls, message: str) -> Optional[str]:
-        """Extract email from message."""
-        match = re.search(cls.EMAIL_PATTERN, message)
-        return match.group(0) if match else None
-    
-    @classmethod
-    def extract_phone(cls, message: str) -> Optional[str]:
-        """Extract phone number from message."""
-        match = re.search(cls.PHONE_PATTERN, message)
-        return match.group(0) if match else None
-    
-    @classmethod
-    def extract_name(cls, message: str) -> Optional[str]:
-        """Extract name from message."""
-        # Check for "Name: John Doe" pattern
-        name_label_match = re.search(cls.NAME_LABEL_PATTERN, message)
-        if name_label_match:
-            return name_label_match.group(1)
+    def extract(cls, llm: LLMInterface, text: str, is_history: bool = False) -> Dict[str, str]:
+        """Extract contact information from text using LLM."""
+        prompt = f"""Extract contact information from this {'conversation history' if is_history else 'message'}. 
+        Return ONLY a JSON object with these fields:
+        - name: person's name (properly capitalized)
+        - email: email address (must contain @)
+        - phone: phone number (10+ digits, no formatting)
         
-        # Check if the entire message is just a name
-        message_stripped = message.strip()
-        name_only_match = re.match(cls.NAME_ONLY_PATTERN, message_stripped)
-        if name_only_match and len(message_stripped.split()) <= 3:
-            return message_stripped
+        If a field is not found, set it to null.
+        Do not include any other text, only the JSON object.
         
-        # Look for capitalized words that might be names
-        words = message.split()
-        for i in range(len(words)-1):
-            if i < len(words) - 1 and words[i][0].isupper() and words[i+1].isalpha():
-                return f"{words[i]} {words[i+1]}"
+        {'Look for names in introductions (e.g. "my name is", "I am") and take the most recent valid value if multiple are found.' if is_history else ''}
         
-        # If no full name found, try single capitalized word
-        for word in words:
-            if len(word) > 2 and word[0].isupper() and word.isalpha():
-                return word
+        Examples:
+        Input: "Hi, I'm john smith, reach me at john@email.com or 555-123-4567"
+        Output: {{"name": "John Smith", "email": "john@email.com", "phone": "5551234567"}}
         
-        return None
-    
-    @classmethod
-    def extract_from_message(cls, message: str) -> Dict[str, str]:
-        """Extract all contact information from a message."""
-        info = {}
+        Input: "my name is maria garcia"
+        Output: {{"name": "Maria Garcia", "email": null, "phone": null}}
         
-        email = cls.extract_email(message)
-        if email:
-            info["email"] = email
-            
-        phone = cls.extract_phone(message)
-        if phone:
-            info["phone"] = phone
-            
-        name = cls.extract_name(message)
-        if name:
-            info["name"] = name
-            
-        return info
-    
-    @classmethod
-    def extract_from_history(cls, history: List[Dict[str, str]]) -> Dict[str, str]:
-        """Extract contact information from conversation history."""
-        info = {}
+        Input: "phone: 090-8876-5432"
+        Output: {{"name": null, "email": null, "phone": "09088765432"}}
         
-        for message in history:
-            if message["role"] == "user":
-                message_info = cls.extract_from_message(message["content"])
-                info.update(message_info)
+        {'Conversation history:' if is_history else 'Message:'} {text}
+        """
         
-        return info
-
-
-class HumanRepKeywordDetector:
-    """Responsible for detecting human representative requests."""
-    
-    # Keywords that indicate a user wants to speak with a human
-    HUMAN_REQUEST_KEYWORDS = [
-        "speak to human", "talk to human", "human representative", "real person",
-        "speak to representative", "talk to agent", "real agent", "human agent",
-        "talk to someone", "speak to someone", "speak with someone", "talk with someone", 
-        "in person", "connect me to a person", "connect me to a human",
-        "human support", "live support", "live agent", "live representative",
-        "speak with a human", "talk with a human", "human assistance"
-    ]
-    
-    # Indicators of user frustration that might warrant human intervention
-    FRUSTRATION_INDICATORS = [
-        "not understanding", "can't help", "don't understand", "need help", 
-        "frustrated", "unhelpful", "speak with", "talk with", "connect me", 
-        "get me a", "human assistant", "customer service", "not working", 
-        "stop this", "this is useless", "not helping", "want to speak", 
-        "want to talk", "need a person", "tired of this", "can't solve",
-        "isn't solving", "cannot understand", "getting nowhere", "wasting time",
-        "going in circles", "not getting", "want to connect", "can i talk to",
-        "can i speak to", "is there someone", "is there a person", "is there a human"
-    ]
-    
-    @classmethod
-    def is_human_request(cls, message: str) -> bool:
-        """Determine if the message is a request to speak with a human."""
-        message_lower = message.lower()
-        
-        # Check for keywords
-        for keyword in cls.HUMAN_REQUEST_KEYWORDS:
-            if keyword in message_lower:
-                return True
-                
-        # Check for frustration indicators
-        for indicator in cls.FRUSTRATION_INDICATORS:
-            if indicator in message_lower:
-                return True
-                
-        return False
-
+        try:
+            response = llm.generate_response(prompt, [])
+            response = cls.clean_json_response(response)
+            info = json.loads(response)
+            return {k: v.strip() if isinstance(v, str) else v 
+                   for k, v in info.items() 
+                   if v is not None}
+        except Exception as e:
+            logger.error(f"Error extracting contact info: {str(e)}")
+            return {}
 
 class HumanRepAgent(AgentInterface):
-    """Agent for handling requests to speak with a human representative."""
+    """Agent for handling customer service requests and connecting to human representatives."""
     
     def __init__(self, llm: LLMInterface, customer_service: CustomerService):
         """
@@ -144,15 +80,26 @@ class HumanRepAgent(AgentInterface):
         
         Args:
             llm: Language model for generating responses
-            customer_service: Service for handling customer-related operations
+            customer_service: Service for handling customer requests
         """
+        self.llm = llm
         self.customer_service = customer_service
-        self.collecting_info = False
         self.user_info = {}
+        self.request_submitted = False
+        self.collecting_info = True  # Track whether we're still collecting information
+        self.human_rep_keywords = [
+            "speak to", "talk to", "human representative", "customer service", "speak with",
+            "customer support", "real person", "live agent", "human agent", "speak with someone", 
+            "talk to someone", "connect me to", "transfer me to", "human help", "human assistance", 
+            "supervisor", "manager", "boss", "head of", "lead", "leadership", "authority", 
+            "higher up", "higher authority", "someone in charge", "person in charge", 
+            "superior", "escalate", "escalation", "human"
+        ]
+
     
     def can_handle(self, message: str) -> bool:
         """
-        Check if this agent can handle the given message.
+        Check if this agent can handle the given message using keyword matching.
         
         Args:
             message: The user's message
@@ -160,72 +107,8 @@ class HumanRepAgent(AgentInterface):
         Returns:
             bool: True if this agent can handle the message
         """
-        if self.collecting_info:
-            return True
-            
-        is_human_request = HumanRepKeywordDetector.is_human_request(message)
-        if is_human_request:
-            self.collecting_info = True
-            return True
-                
-        return False
-    
-    def handle(self, message: str, history: List[Dict[str, str]]) -> str:
-        """
-        Handle the request to speak with a human representative.
-        
-        Args:
-            message: The user's message
-            history: Chat history for context
-            
-        Returns:
-            str: Generated response
-        """
-        # Extract info from history and current message
-        history_info = ContactInfoExtractor.extract_from_history(history)
-        message_info = ContactInfoExtractor.extract_from_message(message)
-        
-        # Update user info
-        self.user_info.update(history_info)
-        self.user_info.update(message_info)
-        
-        # Check if we have all required information
-        has_email = "email" in self.user_info
-        has_phone = "phone" in self.user_info
-        has_name = "name" in self.user_info
-        
-        if has_email and has_phone and has_name:
-            # Create contact info
-            contact_info = ContactInfo(
-                full_name=self.user_info["name"],
-                email=self.user_info["email"],
-                phone_number=self.user_info["phone"]
-            )
-            
-            # Save contact request
-            success = self.customer_service.save_contact_request(contact_info)
-            if success:
-                self.collecting_info = False
-                return f"Thank you, {contact_info.full_name}. I've submitted your request to speak with a customer service representative. Someone from our team will contact you at {contact_info.email} or {contact_info.phone_number} as soon as possible. Is there anything else I can help you with in the meantime?"
-            else:
-                return "I'm having trouble submitting your request. Please try again later or contact our customer service directly."
-        
-        # We need to collect more information
-        missing_info = []
-        if not has_name:
-            missing_info.append("full name")
-        if not has_email:
-            missing_info.append("email address")
-        if not has_phone:
-            missing_info.append("phone number")
-        
-        if missing_info:
-            missing_str = ", ".join(missing_info)
-            greeting = f", {self.user_info['name']}" if has_name else ""
-            return f"I'd be happy to connect you with a human representative{greeting}. I'll need your {missing_str} to complete this request. This information will be used to have a representative contact you directly."
-        
-        greeting = f", {self.user_info['name']}" if has_name else ""
-        return f"I'd be happy to connect you with a human representative{greeting}. Could you please provide your full name, email address, and phone number? This information will be used to have a representative contact you."
+        message_lower = message.lower()
+        return any(keyword.lower() in message_lower for keyword in self.human_rep_keywords)
     
     def update_context(self, context: Dict) -> None:
         """
@@ -234,5 +117,69 @@ class HumanRepAgent(AgentInterface):
         Args:
             context: New context information
         """
-        if context:
-            self.user_info.update(context) 
+        # Update user info if provided in context
+        if "user_info" in context:
+            self.user_info.update(context["user_info"])
+        if "request_submitted" in context:
+            self.request_submitted = context["request_submitted"]
+        if "collecting_info" in context:
+            self.collecting_info = context["collecting_info"]
+    
+    def handle(self, message: str, history: List[Dict[str, str]]) -> str:
+        """Handle customer service requests and connect to human representatives."""
+        try:
+            # Extract contact info from history and current message
+            history_info = ContactInfoExtractor.extract(self.llm, "\n".join(f"{msg['role']}: {msg['content']}" for msg in history), is_history=True)
+            message_info = ContactInfoExtractor.extract(self.llm, message)
+            
+            # Update user info, preferring newer values
+            self.user_info.update(history_info)
+            self.user_info.update(message_info)
+            
+            # If we have all required info, submit the request
+            if all(self.user_info.get(field) for field in ["name", "email", "phone"]):
+                if not self.request_submitted:
+                    self._submit_request()
+                    self.request_submitted = True
+                    self.collecting_info = False  # We're done collecting info
+                    return f"Thank you {self.user_info['name']}! I've submitted your request to our customer service team. They will contact you shortly at the provided email or phone number."
+            
+            # Determine what information is still needed
+            missing_fields = []
+            if not self.user_info.get("name"):
+                missing_fields.append("name")
+            if not self.user_info.get("email"):
+                missing_fields.append("email address")
+            if not self.user_info.get("phone"):
+                missing_fields.append("phone number")
+            
+            if missing_fields:
+                return f"I'll need your {' and '.join(missing_fields)} to submit your request to our customer service team."
+            
+            # If we have the info but haven't submitted yet, submit
+            if not self.request_submitted:
+                self._submit_request()
+                self.request_submitted = True
+                self.collecting_info = False
+                return f"Thank you {self.user_info['name']}! I've submitted your request to our customer service team. They will contact you shortly at the provided email or phone number."
+            
+            return "I've already submitted your request to our customer service team. They will contact you shortly at the provided email or phone number."
+            
+        except Exception as e:
+            logger.error(f"Error in human rep agent: {str(e)}")
+            return "I apologize, but I'm having trouble processing your request. Please try again or contact us through our website."
+    
+    def _submit_request(self) -> None:
+        """Submit the customer request to the service."""
+        try:
+            contact_info = ContactInfo(
+                full_name=self.user_info["name"],
+                email=self.user_info["email"],
+                phone_number=self.user_info["phone"],
+                phone=self.user_info["phone"],
+                preferred_contact_method="email"
+            )
+            self.customer_service.save_contact_request(contact_info)
+        except Exception as e:
+            logger.error(f"Error submitting customer request: {str(e)}")
+            raise 
