@@ -18,6 +18,20 @@ A modern, agent-based customer support chatbot built with Python, Streamlit, and
 - OpenAI API key
 - Google API key (optional, for Gemini model)
 
+1. Clone the repository:
+```bash
+git clone https://github.com/pearlsilver35/e-commerce-chatbot.git
+cd e-commerce-chatbot
+```
+2. Create a `.env` file in the project root:
+```env
+OPENAI_API_KEY=your_openai_key
+GOOGLE_API_KEY=your_google_key
+OPENAI_MODEL=gpt-4o
+GEMINI_MODEL=gemini-2.0-flash
+DEFAULT_MODEL=openai
+TEMPERATURE=0.7
+```
 
 ### Docker Deployment
 
@@ -42,39 +56,23 @@ A modern, agent-based customer support chatbot built with Python, Streamlit, and
 
 ### Local Development
 
-1. Clone the repository:
-```bash
-git clone https://github.com/pearlsilver35/e-commerce-chatbot.git
-cd e-commerce-chatbot
-```
+1. Create and activate a **virtual environment**:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
 
-2. Create and activate a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+2. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+3. Start the application:
+   ```bash
+   streamlit run src/app.py
+   ```
 
-4. Create a `.env` file in the project root:
-```env
-OPENAI_API_KEY=your_openai_key
-GOOGLE_API_KEY=your_google_key
-OPENAI_MODEL=gpt-4o
-GEMINI_MODEL=gemini-2.0-flash
-DEFAULT_MODEL=openai
-TEMPERATURE=0.7
-```
-
-5. Start the application:
-```bash
-streamlit run src/app.py
-```
-
-2. Access the application at http://localhost:8501
+4. Access the application at http://localhost:8501
 
 ## Documentation
 
