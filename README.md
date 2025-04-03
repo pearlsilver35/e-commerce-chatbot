@@ -23,15 +23,8 @@ A modern, agent-based customer support chatbot built with Python, Streamlit, and
 git clone https://github.com/pearlsilver35/e-commerce-chatbot.git
 cd e-commerce-chatbot
 ```
-2. Create a `.env` file in the project root:
-```env
-OPENAI_API_KEY=your_openai_key
-GOOGLE_API_KEY=your_google_key
-OPENAI_MODEL=gpt-4o
-GEMINI_MODEL=gemini-2.0-flash
-DEFAULT_MODEL=openai
-TEMPERATURE=0.7
-```
+2. Create a `.env` file in the project root from the .env.example and put your api keys
+
 
 ### Docker Deployment
 
@@ -39,17 +32,19 @@ TEMPERATURE=0.7
    ```bash
    docker-compose up --build -d
    ```
-2. **Run tests**:
+2. Access the application at http://localhost:8501
+
+3. **Run tests**:
    ```bash
    docker-compose run test
    ```
 
-3. **After the first build**, if you want to start the application without rebuilding, you can simply run:
+4. **After the first build**, if you want to start the application without rebuilding, you can simply run:
    ```bash
    docker-compose up app
    ```
 
-4. **To stop the application**, use:
+5. **To stop the application**, use:
    ```bash
    docker-compose down
    ```
